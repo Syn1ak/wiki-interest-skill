@@ -32,6 +32,10 @@ Every command prints **one JSON document** with a `status` field and an `agent_h
 │   ├── explore_api.py
 │   └── FINDINGS.md
 └── wiki-interest/                # the skill itself (everything it needs lives here)
+    ├── SKILL.md                  # Step 6: instructions for the agent (Agent Skills format)
+    ├── references/
+    │   ├── methodology.md        # how every number and confidence level is computed
+    │   └── examples.md           # procedures for the three typical requests
     ├── scripts/
     │   ├── wi.py                 # CLI entry point: python3 scripts/wi.py <command>
     │   └── wikiinterest/
@@ -40,14 +44,16 @@ Every command prints **one JSON document** with a `status` field and an `agent_h
     │       ├── fetch.py          # Step 3: daily pageviews -> dataset file
     │       ├── analyze.py        # Step 4: dataset -> growth, trend, spikes, confidence
     │       ├── chart.py          # Step 5: analysis -> PNG charts
-    │       └── report.py         # Step 5: analysis + agent text -> one-page PDF
+    │       ├── report.py         # Step 5: analysis + agent text -> one-page PDF
+    │       └── study.py          # Step 6: resolve -> fetch -> analyze -> chart in one call
     ├── scripts/setup.sh          # creates .venv with pinned dependencies
     ├── requirements.txt          # pinned dependencies for chart/report
     └── tests/                    # offline unit tests (fake API responses, synthetic data)
         ├── test_resolve.py
         ├── test_fetch.py
         ├── test_analyze.py
-        └── test_report.py
+        ├── test_report.py
+        └── test_study.py
 ```
 
 ## Requirements
@@ -347,3 +353,64 @@ wiki-interest/.venv/bin/python -m unittest discover -s wiki-interest/tests -v
 
 **Next step.** `SKILL.md`: the instructions that tie the commands into one workflow for the agent. When to ask the user (ambiguous topic, missing languages, proxies), how to read statuses, confidence and `facts`, and the rule that every claim must come from the analysis. Then an end-to-end check on a cheap model with the three example questions from the task.
 
+---
+
+## Step 6: `SKILL.md` and the one-call `study` command
+
+**What we did.** Wrote [`SKILL.md`](wiki-interest/SKILL.md), the file that turns the scripts into an [Agent Skill](https://agentskills.io/specification), plus two reference files. We also added a `study` command that runs the usual path in one call.
+
+**Why.** Until now the commands worked, but nothing told an agent *when* to use them, *in which order*, *when to stop and ask the user*, or *how to read the output*. That is what `SKILL.md` is for. It follows the Agent Skills guides ([best practices](https://agentskills.io/skill-creation/best-practices), [using scripts](https://agentskills.io/skill-creation/using-scripts), [optimizing descriptions](https://agentskills.io/skill-creation/optimizing-descriptions)). The skill must work on a cheap model, so every design choice aims at fewer decisions and fewer tool calls for the agent.
+
+**`study`: one call instead of four.**
+
+```bash
+cd wiki-interest
+.venv/bin/python scripts/wi.py study --topic "астрономія" --langs uk,pl,cs --lang uk
+.venv/bin/python scripts/wi.py study --qid Q333 --langs uk,pl,cs,sk --months 36   # follow-up, all cached
+```
+
+It runs resolve → fetch → analyze → chart and **stops only when a human decision is needed**:
+- `needs_user`: an ambiguous topic or one that was not found; nothing is fetched until the user picks a meaning;
+- `partial`: some languages have no article; the output includes the search hits so the agent can offer a proxy.
+
+The single steps are still available for debugging or unusual flows. The guides say agents waste steps when there are "too many options without a clear default". `study` is that default.
+
+**How `SKILL.md` is built:**
+
+- **Frontmatter.**
+  - `name` matches the directory.
+  - The `description` (603 of 1024 characters) is written as when to use the skill, in terms of the user's intent: which topics or courses to build next, which languages or markets to launch in, whether interest is growing or seasonal, how much a trend can be trusted, "even if they do not mention Wikipedia". It also says what the skill is *not* for (editing Wikipedia, web search, revenue forecasts).
+  - `compatibility` states Python 3.11+, bash, the internet hosts, and that commands run from the skill directory.
+- **Body** (~150 lines, ~2k tokens; the spec recommends under 500 lines and 5k tokens):
+  - **Setup once**, then one exact way to run commands.
+  - **A workflow checklist** (parameters → `study` → status → answer → report).
+  - **A status table**: what to do for `ok`, `needs_user`, `partial`, `no_data`, `error`, including exactly how to rerun with `--qid` or `--article`.
+  - **An answer template** for chat: short answer, what the data shows, how much to trust it, limitations, next step.
+  - **A validation loop for the PDF**: `report` → if `needs_review`, replace the unverified numbers → rerun until `ok`.
+  - **How to read the results**: which number is the headline, what each trend means, which rankings are comparable across languages.
+  - **Gotchas**, which the guides call the highest-value content. Each one comes from something we actually ran into:
+    - activity-style topics without articles ("learning English");
+    - one article ≠ the whole topic;
+    - "Меркурій" and other ambiguous terms;
+    - language codes vs country codes (`cs` not `cz`, `uk` not `ua`);
+    - reusing `--qid` so follow-ups stay on the same concept;
+    - small numbers;
+    - a shrinking Wikipedia;
+    - comparing several topics.
+- **Progressive disclosure.** Details the agent needs only sometimes are in `references/`, with an explicit trigger for each:
+  - [`methodology.md`](wiki-interest/references/methodology.md): *read when the user asks how a number is computed or challenges a result*. It holds all definitions, thresholds, confidence rules, and how to explain them to a non-technical user.
+  - [`examples.md`](wiki-interest/references/examples.md): *read for multi-language comparisons, "which audiences next" or proxies*. It gives procedures for the three example requests from the task. The procedures contain no numbers, so the agent cannot copy stale results.
+
+**CLI polish for agents.** `--help` now starts with the usual path and documents the exit codes: 0 = done (read `status`), 1 = error (read `error`), 2 = invalid arguments. Output is indented less to save context.
+
+**Validation.** The skill passes the official validator:
+
+```bash
+skills-ref validate wiki-interest     # -> Valid skill: wiki-interest
+```
+
+`skills-ref` is installed from [agentskills/agentskills](https://github.com/agentskills/agentskills/tree/main/skills-ref).
+
+**Tests.** `study` stops before fetching anything when the topic is ambiguous; runs the full path with a missing language and returns search hits for a proxy; and with `--qid` skips the topic search. Writing these tests exposed a real bug: with a period too short to compare anything, the growth chart crashed on an empty list. It now returns no growth chart instead. 43 tests pass (8 are skipped without the chart/report dependencies).
+
+**Next step.** An end-to-end check on a cheap model (Claude Haiku 4.5 or a free OpenRouter model) with the three example questions from the task. Read the agent's execution traces, and fix `SKILL.md` wherever the agent goes wrong. The guides recommend exactly this: "run the skill against real tasks, then feed the results back".
