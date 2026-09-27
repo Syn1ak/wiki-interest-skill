@@ -37,10 +37,12 @@ Every command prints **one JSON document** with a `status` field and an `agent_h
     │   └── wikiinterest/
     │       ├── http.py           # shared HTTP client: User-Agent, throttling, retries, disk cache
     │       ├── resolve.py        # Step 2: topic -> Wikipedia articles in several languages
-    │       └── fetch.py          # Step 3: daily pageviews -> dataset file
-    └── tests/                    # offline unit tests (fake API responses)
+    │       ├── fetch.py          # Step 3: daily pageviews -> dataset file
+    │       └── analyze.py        # Step 4: dataset -> growth, trend, spikes, confidence
+    └── tests/                    # offline unit tests (fake API responses, synthetic data)
         ├── test_resolve.py
-        └── test_fetch.py
+        ├── test_fetch.py
+        └── test_analyze.py
 ```
 
 ## Requirements
@@ -185,3 +187,71 @@ python3 -m unittest discover -s wiki-interest/tests -v
 ```
 
 **Next step.** `analyze`: read a dataset and compute what the answer needs. That means year-over-year growth, raw and normalised by project traffic; trend direction; spike detection; seasonality; a minimum-volume threshold; and a confidence level with reasons, answering "how much can we trust this growth?".
+
+---
+
+## Step 4: `analyze`, dataset → growth, trend and confidence
+
+**What we did.** A command that reads a dataset from `fetch` and computes everything the answer needs, including how much each number can be trusted.
+
+```bash
+python3 wiki-interest/scripts/wi.py analyze --dataset wiki-interest-data/Q333_uk-pl-cs_2024-09_2026-08.json
+```
+
+**Why.** This is where the question *"how much can we trust this growth?"* gets answered. A cheap model cannot reliably compute growth rates or notice that a trend comes from one odd month. So all numbers, verdicts and caveats are computed in code, and the agent only has to explain them. The output also contains ready-made **`facts`**, short sentences with the exact numbers, so the agent can quote instead of calculating.
+
+**How it works:**
+
+1. **Interest** = human views of the article + its redirects.
+2. **Spikes.** A day is a spike if it has more than 3× the views of a 29-day rolling median *and* at least 10 extra views, so that 2 → 9 views is not a spike. Spike days are replaced by the median in a "despiked" series. Spikes in the same calendar month in different years, or in a seasonal peak month, are marked `recurring`.
+3. **Normalisation.** Views per million human views of the whole language edition (finding #5).
+4. **Growth, year over year.** The last 12 months are compared with the same 12 months a year earlier, so seasonality cancels out. With 13–23 months, the last *K* months are compared with the same *K* months a year earlier. Under 13 months, seasonality cannot be controlled and this is stated.
+   - `raw`: absolute views, for transparency;
+   - `normalized`: the **headline** number, with spikes removed, normalised, and anomalous months excluded.
+5. **Anomalous months.** A whole month at least 2× its year's average that does *not* repeat in the same month of other years. Such a month and its pair a year apart are excluded from growth. This was added after real data showed a case the spike detector could not catch (see below).
+6. **Consistency.** In how many of the compared months the value beat the same month a year earlier.
+7. **Trend**: `rising` / `falling` if |growth| ≥ 10% and at least 2/3 of months agree; `flat` if |growth| < 10%; `mixed` if the months disagree.
+8. **Seasonality.** A calendar month that is at least 1.5× its year's average on average and at least 1.3× in *every* year.
+9. **Yearly breakdown** for periods of 3+ years, for questions like "over the last 5 years".
+10. **Confidence** (`high` / `medium` / `low`) with explicit `reasons` and `notes`. It starts at `high` and goes down for:
+    - volume under 10 views/day (→ low) or under 50 (→ at most medium);
+    - under 13 months of data (→ low), or under 9 comparable months (→ at most medium);
+    - an article that probably did not exist at the start of the period (→ low);
+    - a proxy article (→ at most medium);
+    - more than 20% of views from spikes, more than 50% automated traffic, or an inconsistent (`mixed`) change (each one level down).
+11. **Comparison across languages**, ranked by normalised growth, by share per million (the topic's share of each edition's attention, comparable across editions of different sizes), and by average daily views.
+
+The full monthly series (raw, despiked, per million) are written to `<dataset>.analysis.json` for charts. Stdout gets the compact result (~7 KB for three languages).
+
+**What real data taught us here.** The first run reported a "seasonal peak in November" for Polish *Astronomia*. The daily numbers showed something else: **from exactly 1 to 30 November 2025**, a steady ~130 views/day, against ~38 in October and ~48 in December. A flat plateau aligned to a calendar month is most likely undetected bot traffic or a campaign. The daily spike detector missed it, because the rolling median adapts to a month-long plateau. So we added anomalous-month detection and made seasonality require a peak in *every* year. The effect on the answer is not small: Polish normalised growth went from −10.9% to **−22.8%**, because the anomaly was hiding the decline. The Ukrainian September peak (school year, finding #4) is still correctly detected as seasonal.
+
+**Results on real data** (24 months, 2024-09..2026-08, unless noted):
+
+| Topic · language | Headline growth (normalised) | Months up | Trend | Confidence |
+|---|---|---|---|---|
+| Astronomy · uk | −47.7% (raw −59.6%, whole uk.wikipedia −24.6%) | 1 / 12 | falling, seasonal peak every September | medium (18 views/day) |
+| Astronomy · pl | −22.8%, Nov 2025 excluded as anomalous | 2 / 11 | falling | medium (47 views/day) |
+| Astronomy · cs | −24.7% | 2 / 12 | falling | medium (17 views/day) |
+| Large language model · uk | −5.5% (raw −28.4%) | 5 / 12 | **flat**: the drop is the whole Wikipedia shrinking | medium |
+| Large language model · pl | +21.0% | 10 / 12 | rising | **high** |
+| Large language model · de | +22.1% | 11 / 12 | rising | **high** |
+| Intermittent fasting · pl (proxy *Głodówka lecznicza*) | −32.9% | 2 / 12 | falling | low (6 views/day, proxy) |
+| Astronomy · uk · 60 months | per million: 40.6 → 32.5 → 30.9 → 18.1 → 9.7 (−76% over 5 years) | | falling | medium |
+| Astronomy · uk · 8 months | −6.4% vs the previous 4 months | | flat | low (seasonality not controlled) |
+
+**Tests.** Synthetic datasets with known answers:
+- steady growth → `rising`, `high`;
+- a shrinking Wikipedia → raw falling but `flat`;
+- a one-day spike does not fake growth;
+- a month-long plateau is excluded as anomalous;
+- a repeating month is seasonal, not anomalous;
+- low volume, short periods, proxies and bots lower confidence;
+- inconsistent change → `mixed`;
+- yearly breakdown for long periods;
+- invalid dataset files are rejected.
+
+```bash
+python3 -m unittest discover -s wiki-interest/tests -v
+```
+
+**Next step.** `chart` and `report`: render the monthly series from `*.analysis.json` as a chart in code, and build a one-page PDF that combines the chart, a metrics table, the agent's text, and a *Method & limitations* block.

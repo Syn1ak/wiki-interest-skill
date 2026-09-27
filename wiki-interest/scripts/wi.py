@@ -5,12 +5,14 @@
     python3 scripts/wi.py resolve --qid Q333 --langs uk,pl,cs
     python3 scripts/wi.py fetch --qid Q333 --langs uk,pl,cs --months 24
     python3 scripts/wi.py fetch --qid Q1666254 --langs pl,cs --article "pl=Głodówka lecznicza"
+    python3 scripts/wi.py analyze --dataset wiki-interest-data/Q333_uk-pl-cs_2024-09_2026-08.json
 """
 
 import argparse
 import json
 import sys
 
+from wikiinterest.analyze import analyze
 from wikiinterest.fetch import fetch
 from wikiinterest.http import ApiError
 from wikiinterest.resolve import resolve
@@ -49,6 +51,9 @@ def main(argv=None):
     p.add_argument("--end", help="Last month, YYYY-MM (default: last complete month).")
     p.add_argument("--out-dir", help="Where to write the dataset (default: ./wiki-interest-data).")
 
+    p = sub.add_parser("analyze", help="Compute growth, trend, spikes and confidence for a dataset.")
+    p.add_argument("--dataset", required=True, help="Dataset file written by fetch.")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "resolve":
@@ -56,6 +61,8 @@ def main(argv=None):
         elif args.command == "fetch":
             result = fetch(qid=args.qid, langs=args.langs, overrides=dict(args.article), start=args.start,
                            end=args.end, months=args.months, out_dir=args.out_dir)
+        elif args.command == "analyze":
+            result = analyze(args.dataset)
     except (ValueError, ApiError) as e:
         result = {"status": "error", "error": str(e)}
 
