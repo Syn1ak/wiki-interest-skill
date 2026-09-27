@@ -6,6 +6,10 @@
     python3 scripts/wi.py fetch --qid Q333 --langs uk,pl,cs --months 24
     python3 scripts/wi.py fetch --qid Q1666254 --langs pl,cs --article "pl=Głodówka lecznicza"
     python3 scripts/wi.py analyze --dataset wiki-interest-data/Q333_uk-pl-cs_2024-09_2026-08.json
+    .venv/bin/python scripts/wi.py chart --analysis wiki-interest-data/Q333_uk-pl-cs_2024-09_2026-08.analysis.json
+    .venv/bin/python scripts/wi.py report --analysis <...>.analysis.json --content content.json --lang uk
+
+chart and report need the dependencies from requirements.txt (see scripts/setup.sh).
 """
 
 import argparse
@@ -54,6 +58,17 @@ def main(argv=None):
     p = sub.add_parser("analyze", help="Compute growth, trend, spikes and confidence for a dataset.")
     p.add_argument("--dataset", required=True, help="Dataset file written by fetch.")
 
+    p = sub.add_parser("chart", help="Render trend and growth PNG charts from an analysis file.")
+    p.add_argument("--analysis", required=True, help="*.analysis.json written by analyze.")
+    p.add_argument("--lang", default="en", choices=["en", "uk"], help="Language of chart labels.")
+
+    p = sub.add_parser("report", help="Build a one-page PDF from an analysis file and the agent's text.")
+    p.add_argument("--analysis", required=True, help="*.analysis.json written by analyze.")
+    p.add_argument("--content", required=True,
+                   help='JSON file (or - for stdin): {"title", "question"?, "summary", "recommendations": [...]}')
+    p.add_argument("--lang", default="en", choices=["en", "uk"], help="Language of headings and method text.")
+    p.add_argument("--out", help="PDF path (default: next to the analysis file).")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "resolve":
@@ -63,12 +78,21 @@ def main(argv=None):
                            end=args.end, months=args.months, out_dir=args.out_dir)
         elif args.command == "analyze":
             result = analyze(args.dataset)
+        elif args.command == "chart":
+            from wikiinterest.chart import chart
+            result = chart(args.analysis, lang=args.lang)
+        elif args.command == "report":
+            from wikiinterest.report import report
+            result = report(args.analysis, args.content, lang=args.lang, out_path=args.out)
+    except ModuleNotFoundError as e:
+        result = {"status": "error", "error": f"Missing dependency: {e.name}. Run: bash scripts/setup.sh, "
+                                                 "then use .venv/bin/python scripts/wi.py ..."}
     except (ValueError, ApiError) as e:
         result = {"status": "error", "error": str(e)}
 
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     print()
-    return 1 if result.get("status") == "error" else 0
+    return 1 if result.get("status") == "error" else 0  # needs_review is not an error: the PDF exists
 
 
 if __name__ == "__main__":

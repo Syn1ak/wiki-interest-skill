@@ -247,36 +247,46 @@ def assess_confidence(avg_daily, n_months, window, seasonal_safe, proxy, spike_s
                       automated_share, trend, growth, leading_zero_days, months_up, compared):
     level, reasons, notes = 2, [], []
 
-    def cap(to, why):
+    codes = []  # machine-readable twin of `reasons`, so the report can translate them
+
+    def cap(to, why, code, **params):
         nonlocal level
         level = min(level, to)
         reasons.append(why)
+        codes.append({"code": code, **params})
 
-    def down(why):
+    def down(why, code, **params):
         nonlocal level
         level = max(0, level - 1)
         reasons.append(why)
+        codes.append({"code": code, **params})
 
     if avg_daily < LOW_VOLUME:
-        cap(0, f"very low volume ({avg_daily} views/day): a few readers can swing the numbers")
+        cap(0, f"very low volume ({avg_daily} views/day): a few readers can swing the numbers",
+            "very_low_volume", views_per_day=avg_daily)
     elif avg_daily < MEDIUM_VOLUME:
-        cap(1, f"low volume ({avg_daily} views/day)")
+        cap(1, f"low volume ({avg_daily} views/day)", "low_volume", views_per_day=avg_daily)
     if not seasonal_safe:
-        cap(0, f"only {n_months} months of data: seasonality cannot be separated from trend")
+        cap(0, f"only {n_months} months of data: seasonality cannot be separated from trend",
+            "short_period", months=n_months)
     elif compared < 9:
-        cap(1, f"only {compared} months could be compared with the same months a year earlier")
+        cap(1, f"only {compared} months could be compared with the same months a year earlier",
+            "few_comparable_months", months=compared)
     if leading_zero_days > 30:
-        cap(0, f"no views in the first {leading_zero_days} days: the article probably did not exist yet")
+        cap(0, f"no views in the first {leading_zero_days} days: the article probably did not exist yet",
+            "new_article", days=leading_zero_days)
     if proxy:
-        cap(1, "proxy article approved by the user, not the exact concept")
+        cap(1, "proxy article approved by the user, not the exact concept", "proxy")
     if spike_share > SPIKE_SHARE_WARN:
-        down(f"{spike_share:.0%} of views come from short spikes")
+        down(f"{spike_share:.0%} of views come from short spikes", "spikes", share=spike_share)
     if automated_share > AUTOMATED_BAD:
-        down(f"{automated_share:.0%} of traffic is automated: undetected bots may remain in 'user' views")
+        down(f"{automated_share:.0%} of traffic is automated: undetected bots may remain in 'user' views",
+             "automated", share=automated_share)
     elif automated_share > AUTOMATED_WARN:
         notes.append(f"{automated_share:.0%} of traffic is flagged automated (excluded from the numbers)")
     if trend == "mixed":
-        down(f"change is not consistent: only {months_up} of {compared} months beat the same month a year earlier")
+        down(f"change is not consistent: only {months_up} of {compared} months beat the same month a year earlier",
+             "inconsistent", months_up=months_up, months=compared)
 
     for m, ratio in growth["excluded_months"].items():
         notes.append(f"{m} excluded with its year-apart pair: the whole month was x{ratio} its year's average "
@@ -291,7 +301,8 @@ def assess_confidence(avg_daily, n_months, window, seasonal_safe, proxy, spike_s
 
     if level == 2:
         reasons.append("enough volume, two full years compared, consistent year-over-year change")
-    return {"level": LEVELS[level], "reasons": reasons, "notes": notes}
+        codes.append({"code": "solid"})
+    return {"level": LEVELS[level], "reasons": reasons, "reason_codes": codes, "notes": notes}
 
 
 # --- Facts & comparison -------------------------------------------------------------------------

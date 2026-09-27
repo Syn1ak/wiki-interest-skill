@@ -38,16 +38,29 @@ Every command prints **one JSON document** with a `status` field and an `agent_h
     │       ├── http.py           # shared HTTP client: User-Agent, throttling, retries, disk cache
     │       ├── resolve.py        # Step 2: topic -> Wikipedia articles in several languages
     │       ├── fetch.py          # Step 3: daily pageviews -> dataset file
-    │       └── analyze.py        # Step 4: dataset -> growth, trend, spikes, confidence
+    │       ├── analyze.py        # Step 4: dataset -> growth, trend, spikes, confidence
+    │       ├── chart.py          # Step 5: analysis -> PNG charts
+    │       └── report.py         # Step 5: analysis + agent text -> one-page PDF
+    ├── scripts/setup.sh          # creates .venv with pinned dependencies
+    ├── requirements.txt          # pinned dependencies for chart/report
     └── tests/                    # offline unit tests (fake API responses, synthetic data)
         ├── test_resolve.py
         ├── test_fetch.py
-        └── test_analyze.py
+        ├── test_analyze.py
+        └── test_report.py
 ```
 
 ## Requirements
 
-- Python 3.10+, standard library only (no third-party packages yet).
+- Python 3.11+.
+- `resolve`, `fetch` and `analyze` use only the standard library.
+- `chart` and `report` need `matplotlib` and `fpdf2`, pinned in [`requirements.txt`](wiki-interest/requirements.txt). Install them into the skill's own virtual environment:
+
+  ```bash
+  bash wiki-interest/scripts/setup.sh
+  ```
+
+  Then run commands with `wiki-interest/.venv/bin/python wiki-interest/scripts/wi.py ...`.
 - Internet access to `wikidata.org`, `*.wikipedia.org` and `wikimedia.org`.
 
 Optional environment variables:
@@ -255,3 +268,82 @@ python3 -m unittest discover -s wiki-interest/tests -v
 ```
 
 **Next step.** `chart` and `report`: render the monthly series from `*.analysis.json` as a chart in code, and build a one-page PDF that combines the chart, a metrics table, the agent's text, and a *Method & limitations* block.
+
+---
+
+## Step 5: `chart` and `report`, analysis → charts and a one-page PDF
+
+**What we did.** Two commands that turn an analysis into something a founder can look at and share.
+
+```bash
+bash wiki-interest/scripts/setup.sh   # once: creates wiki-interest/.venv with pinned matplotlib + fpdf2
+PY=wiki-interest/.venv/bin/python
+$PY wiki-interest/scripts/wi.py chart  --analysis wiki-interest-data/Q333_uk-pl-cs_2024-09_2026-08.analysis.json --lang uk
+$PY wiki-interest/scripts/wi.py report --analysis wiki-interest-data/Q333_uk-pl-cs_2024-09_2026-08.analysis.json \
+                                       --content content.json --lang uk
+```
+
+**Why.** The task asks for charts and short reports that can be shared, for example a one-page PDF. A chart drawn by the agent would look different every time and could misplot numbers. Here the chart is rendered by code from the same numbers as the analysis. For the report, the split from the design principle applies again:
+- the **agent writes only what needs judgment**: title, summary, recommendations;
+- **everything factual is generated**: the chart, the metrics table, and the method & limitations block.
+
+This way the limitations cannot be forgotten or softened.
+
+**`chart`** writes two PNGs next to the analysis file:
+
+- **trend**: monthly share of attention (views per million, spikes removed), one line per language, on **one y-axis**. Share per million is comparable across editions of different sizes; raw views are not. Anomalous excluded months are shown as hollow circles. With more than 4 languages, the chart switches to small multiples with a shared y-axis, so lines never tangle.
+- **growth**: headline year-over-year change per language with its confidence level. The colour follows the *verdict*: blue = rising, red = falling, grey = flat or mixed. So a "flat" −5% is not painted as a decline.
+
+Chart design follows a data-visualisation checklist. Colours come from a fixed-order categorical palette that passed a colour-blindness validator (adjacent pairs distinguishable under protan/deutan/tritan simulation). Three of its colours are below 3:1 contrast on white, so every line also has a **direct label** and the report has a **table** with the same numbers. Colour never carries meaning alone.
+
+**`report`** builds an A4 PDF with:
+
+1. title, topic (with Wikidata ID), languages, period, date;
+2. the user's question and the agent's summary;
+3. the trend chart;
+4. a metrics table (views/day, share per million, share change, raw change, months up, trend, confidence), with article titles linked to Wikipedia;
+5. the agent's recommendations (1–5);
+6. **Method & limitations**, generated from the analysis:
+   - data source and filters;
+   - what normalisation means;
+   - how change is compared;
+   - excluded anomalous months;
+   - exact articles and proxies;
+   - languages without data;
+   - confidence with reasons;
+   - the reminder that pageviews show curiosity, not willingness to pay.
+
+The agent passes its text as JSON (a file, or `-` for stdin):
+
+```json
+{"title": "...", "question": "...", "summary": "...", "recommendations": ["...", "..."]}
+```
+
+Headings, the table and the method block are available in English and Ukrainian (`--lang en|uk`). Confidence reasons are emitted by `analyze` as codes with parameters (`reason_codes`), so they are translated too, not left in English. Fonts are the DejaVu fonts bundled with matplotlib, which cover Cyrillic and Latin with diacritics, so no font files need to be shipped.
+
+**Checks built into `report`:**
+
+- **Numbers in the agent's text are verified against the analysis.** Every number in the title, summary and recommendations must match a number in the analysis, within honest rounding: 47.7 → "48%" or "47,7%" is fine, "47.2%" is not. Dates and small counts are ignored. Unmatched numbers give status `needs_review` with a list, and the agent is told to fix them. This directly supports the task's requirement that reports are based on data.
+- **One page, guaranteed.** If the text does not fit, the PDF is deleted and the agent is asked to shorten it.
+- **Content validation**: required fields and length limits, with clear error messages.
+
+**What we checked by looking at the output.** Each chart and the PDF were rendered and inspected, not only tested. This caught:
+- a wasted band under the chart title;
+- an empty half in the growth chart when all values are negative;
+- a "flat" −5.5% painted red;
+- a table heading broken mid-word;
+- justified text with stretched spaces;
+- English confidence reasons inside a Ukrainian report.
+
+All of these were fixed. In a test report about astronomy we deliberately wrote one invented number ("35%") among real ones in several formats. The check flagged exactly that one.
+
+**Reproducible environment.** Dependencies are pinned in `requirements.txt` and installed only inside `wiki-interest/.venv` by `scripts/setup.sh`. The environment was rebuilt from scratch with this script and all tests passed. If the dependencies are missing, `chart` and `report` return a clear error that says to run the setup script.
+
+**Tests.** The number check (formats, invented numbers, honest rounding); a one-page PDF with charts; small multiples for 6 languages; `needs_review` for an invented number; rejection of text that does not fit on one page; and content validation. With the system Python (no dependencies), these tests are skipped and the other tests still run.
+
+```bash
+wiki-interest/.venv/bin/python -m unittest discover -s wiki-interest/tests -v
+```
+
+**Next step.** `SKILL.md`: the instructions that tie the commands into one workflow for the agent. When to ask the user (ambiguous topic, missing languages, proxies), how to read statuses, confidence and `facts`, and the rule that every claim must come from the analysis. Then an end-to-end check on a cheap model with the three example questions from the task.
+
