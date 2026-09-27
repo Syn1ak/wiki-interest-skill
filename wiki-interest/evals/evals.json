@@ -1,0 +1,83 @@
+{
+  "skill_name": "wiki-interest",
+  "notes": "Prompts are the example requests from the task plus one edge case. 'replies' are scripted user answers, sent one by one only when the agent ends its turn with a question.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "fasting-pl-cs",
+      "prompt": "Порівняй зростання інтересу до інтервального голодування в польськомовній та чеськомовній Wikipedia за останні два роки.",
+      "replies": [
+        "Добре, візьми найближчу за змістом польську статтю як замінник і порівняй."
+      ],
+      "expected_output": "Finds that Polish Wikipedia has no article on intermittent fasting and says so before comparing; asks the user before using a proxy; compares with numbers from the tool; states confidence and that the Polish side is a proxy.",
+      "assertions": [
+        "uses the skill's scripts",
+        "answers in Ukrainian in every turn",
+        "uses study for the analysis",
+        "requests exactly the languages pl and cs",
+        "period is the last 24 months",
+        "tells the user that Polish has no article before comparing",
+        "does not use a proxy article before the user approves it",
+        "states confidence",
+        "every number in the answers comes from the analysis"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "astronomy-uk-trust",
+      "prompt": "Ми думаємо додати курс з астрономії до освітнього застосунку. Чи зростає інтерес до цієї теми в україномовній Wikipedia, і наскільки цьому зростанню можна довіряти?",
+      "replies": [
+        "Продовжуй на свій розсуд."
+      ],
+      "expected_output": "Uses only Ukrainian Wikipedia; answers that interest is falling (normalised), mentions the September seasonality and the shrinking Wikipedia, states medium confidence with its reason; all numbers from the tool.",
+      "assertions": [
+        "uses the skill's scripts",
+        "answers in Ukrainian in every turn",
+        "uses study for the analysis",
+        "in the first answer, requests only the language uk",
+        "says interest is falling, not growing",
+        "states confidence",
+        "mentions seasonality (September / school year)",
+        "every number in the answers comes from the analysis"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "english-learning-audiences-report",
+      "prompt": "Ми створюємо застосунок для вивчення мов. Порівняй інтерес до вивчення англійської у вибраних нами мовних розділах та підготуй короткий звіт: які аудиторії варто дослідити наступними й чому?",
+      "replies": [
+        "Українська, польська, німецька, іспанська та турецька.",
+        "Якщо окремої статті немає, бери ширше поняття — англійська мова. Звіт потрібен у PDF."
+      ],
+      "expected_output": "Asks which language editions before fetching; agrees on the concept (activity topics often lack articles); compares the five languages with share per million and normalised growth; produces a one-page PDF whose number check passes; recommends which audiences to research next and why.",
+      "assertions": [
+        "uses the skill's scripts",
+        "answers in Ukrainian in every turn",
+        "asks which languages before fetching any data",
+        "requests the languages the user named (uk, pl, de, es, tr)",
+        "uses study for the analysis",
+        "runs report and ends with status ok",
+        "recommends which audiences to research next",
+        "report content lists the chosen concept as a limitation",
+        "every number in the answers comes from the analysis"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "ambiguous-mercury",
+      "prompt": "Чи росте інтерес до Меркурія в українській і польській Вікіпедії?",
+      "replies": [
+        "Планета."
+      ],
+      "expected_output": "Notices that Меркурій is ambiguous (planet, element, god), asks which one before fetching data, then analyses the planet with --qid.",
+      "assertions": [
+        "uses the skill's scripts",
+        "answers in Ukrainian in every turn",
+        "asks which meaning before fetching any data",
+        "after the answer, reruns with --qid",
+        "requests exactly the languages uk and pl",
+        "every number in the answers comes from the analysis"
+      ]
+    }
+  ]
+}

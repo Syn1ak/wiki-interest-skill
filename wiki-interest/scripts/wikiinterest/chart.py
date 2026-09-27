@@ -67,8 +67,12 @@ def _spread_labels(ys, min_gap):
     return out
 
 
-def _panel(ax, items, labels, show_end_labels, tick_months=(1, 7)):
-    ymax = max(max(v for v in s["per_million"]) for _, s, _, _ in items) or 1
+def _ymax(items):
+    return max(max(s["per_million"]) for _, s, _, _ in items) or 1
+
+
+def _panel(ax, items, labels, show_end_labels, tick_months=(1, 7), ymax=None):
+    ymax = ymax or _ymax(items)
     ends = []
     for lang, s, color, excluded in items:
         x = _month_dates(s["months"])
@@ -108,7 +112,7 @@ def trend_chart(analysis, out_path, lang="en", width_mm=180, height_mm=72):
                                  dpi=200, sharey=True, squeeze=False)
         axes = [a for row in grid for a in row]
         for ax, item in zip(axes, items):
-            _panel(ax, [item], L, show_end_labels=False, tick_months=(1,))
+            _panel(ax, [item], L, show_end_labels=False, tick_months=(1,), ymax=_ymax(items))
             ax.set_title(item[0], fontsize=8, color=INK, loc="left")
         for ax in axes[len(items):]:
             ax.axis("off")

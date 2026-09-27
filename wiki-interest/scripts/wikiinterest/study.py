@@ -63,9 +63,10 @@ def study(topic=None, qid=None, langs=(), search_lang=None, overrides=None, star
 
     hints = []
     if missing:
-        hints.append(f"No article in: {', '.join(missing)}. Tell the user and ask whether to use one of "
-                     "'search_hits' as a proxy (rerun with --qid and --article LANG=TITLE), a broader topic, "
-                     "or to continue without these languages. Never compare them silently.")
+        hints.append(f"STOP: no article in {', '.join(missing)}. Before answering or writing a report, ask the "
+                     "user whether to use one of 'search_hits' as a proxy (rerun with --qid and --article "
+                     "LANG=TITLE), a broader concept, or to continue without these languages. End your turn "
+                     "with that question.")
     hints.append(analysis["agent_hint"])
     if charts is None:
         hints.append("Charts skipped: dependencies missing (bash scripts/setup.sh).")

@@ -1,7 +1,8 @@
 """Build a one-page PDF report from an analysis file and the agent's text.
 
 The agent writes only what needs judgment (title, summary, recommendations) as JSON:
-    {"title": "...", "question": "...", "summary": "...", "recommendations": ["...", "..."]}
+    {"title": "...", "question": "...", "summary": "...", "recommendations": ["...", "..."],
+     "limitations": ["..."]}   # optional: caveats only the agent knows, e.g. a broader concept was used
 
 Everything factual is generated from the analysis: the chart, the metrics table and the
 "Method & limitations" block (articles, period, filters, exclusions, proxies, missing
@@ -21,7 +22,8 @@ from fpdf.fonts import FontFace
 from .chart import CONFIDENCE, INK, INK_2, MUTED, load_analysis, trend_chart
 
 FONT_DIR = Path(matplotlib.get_data_path()) / "fonts" / "ttf"  # DejaVu ships with matplotlib
-LIMITS = {"title": 100, "question": 250, "summary": 900, "recommendation": 300, "recommendations": 5}
+LIMITS = {"title": 100, "question": 250, "summary": 900, "recommendation": 300, "recommendations": 5,
+          "limitation": 250, "limitations": 3}
 
 T = {
     "en": {
@@ -107,6 +109,14 @@ def load_content(source):
             errors.append(f"at most {LIMITS['recommendations']} recommendations")
         errors += [f"recommendation {i + 1} is longer than {LIMITS['recommendation']} characters"
                    for i, r in enumerate(recs) if len(str(r)) > LIMITS["recommendation"]]
+    lims = content.get("limitations") or []
+    if not isinstance(lims, list):
+        errors.append("'limitations' must be a list of strings")
+    else:
+        if len(lims) > LIMITS["limitations"]:
+            errors.append(f"at most {LIMITS['limitations']} limitations")
+        errors += [f"limitation {i + 1} is longer than {LIMITS['limitation']} characters"
+                   for i, x in enumerate(lims) if len(str(x)) > LIMITS["limitation"]]
     if errors:
         raise ValueError("Invalid report content: " + "; ".join(errors))
     return content
@@ -282,7 +292,7 @@ def build_pdf(a, content, lang, out_path, chart_path):
         pdf.multi_cell(width - 4, 4.6, rec, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.heading(t["method"])
-    for line in method_lines(a, lang):
+    for line in [*content.get("limitations", []), *method_lines(a, lang)]:
         pdf.para(line, size=7, color=INK_2, h=3.4)
 
     pages = pdf.page_no()
@@ -306,7 +316,8 @@ def report(analysis_path, content_source, lang="en", out_path=None):
         return {"status": "error", "error": f"Report does not fit on one page ({pages} pages).",
                 "agent_hint": "Shorten 'summary' and 'recommendations' (fewer, shorter items) and rerun."}
 
-    texts = [content["title"], content.get("question", ""), content["summary"], *content["recommendations"]]
+    texts = [content["title"], content.get("question", ""), content["summary"], *content["recommendations"],
+             *content.get("limitations", [])]
     bad = unverified_numbers([x for x in texts if x], a)
     hints = []
     if bad:

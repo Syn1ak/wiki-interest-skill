@@ -20,14 +20,23 @@ choose what to validate next; they do not measure willingness to pay. All number
 caveats are computed by `scripts/wi.py`. Your job is to turn the request into parameters, handle
 the decisions that need the user, and explain the results.
 
-## Setup (once)
+## Running commands
+
+The shell's working directory is reset between commands, so **start every command with `cd` to this
+skill's directory** (the folder that contains this SKILL.md, shown when the skill loads):
 
 ```bash
-bash scripts/setup.sh
+cd <skill-dir> && .venv/bin/python scripts/wi.py <command> ...
 ```
 
-Then always run `.venv/bin/python scripts/wi.py <command> ...` from this skill's directory.
+If `.venv` does not exist yet, run `cd <skill-dir> && bash scripts/setup.sh` once and wait for it to finish.
 Every command prints one JSON document. Read its `status` and follow its `agent_hint`.
+
+## Language
+
+Reply in the language of the user's message: the answer, clarifying questions and short status lines.
+For a Ukrainian request, write in Ukrainian and pass `--lang uk`. Copy article titles exactly as the
+output gives them (e.g. *Głodówka lecznicza*); never translate or transliterate them.
 
 ## Workflow
 
@@ -37,20 +46,30 @@ Every command prints one JSON document. Read its `status` and follow its `agent_
 - [ ] 4. Answer in chat from `facts`
 - [ ] 5. If a report/PDF/something shareable is wanted: write content, run `report`, fix until `ok`
 
+### Stop and ask the user (end your turn with the question)
+
+1. **Languages are not named.** For example "our chosen languages", "у вибраних нами мовних розділах" or
+   "our markets". Ask which ones *before running anything*. Never pick languages yourself.
+2. **`status` is `needs_user`** (ambiguous or unknown topic): show the options and ask.
+3. **`status` is `partial`** (some languages have no article): ask what to do *before* answering or
+   writing a report. The options are a proxy, a broader concept, or continuing without those languages.
+
+The decision is the user's because each choice changes what the numbers mean.
+
 ### 1. Parameters
 
 - `--topic`: the concept, as the user wrote it (any language). Add `--search-lang` with the
   language of that text if it differs from the first of `--langs`, e.g. `--search-lang en`.
-- `--langs`: Wikipedia codes, comma-separated. If the user says "our languages" without naming them,
-  ask which ones.
+- `--langs`: Wikipedia codes, comma-separated, **only the languages the user asked for**. If the user
+  says "our languages" without naming them, ask which ones.
 - Period: default 24 complete months. "Last two years" = `--months 24`, "five years" = `--months 60`,
   or `--start YYYY-MM --end YYYY-MM`. The current month is never included.
-- `--lang uk` for Ukrainian chart and report labels, otherwise `en`. Write your own text in the user's language.
+- `--lang uk` for Ukrainian chart and report labels, otherwise `en`.
 
 ### 2. Run
 
 ```bash
-.venv/bin/python scripts/wi.py study --topic "астрономія" --langs uk,pl,cs --lang uk
+cd <skill-dir> && .venv/bin/python scripts/wi.py study --topic "астрономія" --langs uk --lang uk
 ```
 
 ### 3. Handle the status
@@ -69,7 +88,8 @@ same `--qid` so the concept stays the same.
 
 ### 4. Answer in chat
 
-Quote numbers only from `facts` or `results`. Never calculate new numbers. Use this structure:
+Quote numbers only from `facts` or `results`. Never calculate new numbers: for example, do not subtract
+two growth rates ("9 points more than Poland"); give both numbers instead. Use this structure:
 
 ```markdown
 **Short answer:** <one or two sentences that answer the question directly>
@@ -94,11 +114,12 @@ chart, table, method and limitations, is generated.
 {"title": "≤100 chars",
  "question": "the user's question, ≤250 chars",
  "summary": "direct answer + key numbers + confidence, ≤900 chars",
- "recommendations": ["1-5 items, each ≤300 chars"]}
+ "recommendations": ["1-5 items, each ≤300 chars"],
+ "limitations": ["optional, ≤3 items: choices you made, e.g. 'English language used instead of learning English'"]}
 ```
 
 ```bash
-.venv/bin/python scripts/wi.py report --analysis <analysis path from study> --content content.json --lang uk
+cd <skill-dir> && .venv/bin/python scripts/wi.py report --analysis <analysis path from study> --content content.json --lang uk
 ```
 
 - `ok`: give the user the `pdf` path.
@@ -108,9 +129,11 @@ chart, table, method and limitations, is generated.
 
 ## Reading the results
 
-- `growth.normalized` is the **headline change**: the topic's share of the language edition's attention,
-  with spikes removed and anomalous months excluded, over the last 12 months vs the same months a year
-  earlier. `growth.raw` (absolute views) is shown only to explain; `growth.project` is the change
+- `growth.normalized` is the **headline change**: the topic's share of attention **within the same
+  language edition** (e.g. the uk article vs all of uk.wikipedia, never vs another language), with spikes
+  removed and anomalous months excluded, over the last 12 months vs the same months a year earlier.
+  It already accounts for the edition shrinking: a negative value means the topic lost attention
+  *beyond* Wikipedia's overall decline, so do not explain it away as "just Wikipedia falling". `growth.raw` (absolute views) is shown only to explain; `growth.project` is the change
   of the whole edition.
 - `trend`: `rising` / `falling` (|change| ≥ 10% and ≥ 2/3 of months agree), `flat` (|change| < 10%),
   `mixed` (months disagree, so do not call it a trend), `unknown`.
@@ -124,10 +147,16 @@ chart, table, method and limitations, is generated.
 
 ## Gotchas
 
+- **Pageviews support research decisions, not launch decisions.** Recommend what to validate next and
+  where (interviews, keyword volume, a landing-page test). Do not write "launch the course" or "ideal
+  market for localization". Curiosity is not demand.
+- **Do not add languages the user did not ask for.** Extra languages can be useful context, but offer them
+  as a follow-up ("compare with pl and cs as well?") instead of adding them to the analysis or report.
 - **Activity-style topics often have no article.** "Learning English", "вивчення англійської" or "how to
   meditate" have articles in few languages. The closest concept everywhere is usually broader
   (e.g. English language) or different (e.g. English as a second language). Show the user what exists
-  and agree on the concept before comparing. State the choice as a limitation.
+  and agree on the concept before comparing. State the choice in the answer and in the report's
+  `limitations`.
 - **One article is not the whole topic.** Interest in "astronomy" is also in *Solar eclipse*, *Mars*, and so on.
   Say that the result is about the specific article(s) used.
 - **Do not trust the first meaning.** "Меркурій" is a planet, an element and a god. Only `--qid` ends the ambiguity.

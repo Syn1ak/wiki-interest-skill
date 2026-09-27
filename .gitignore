@@ -4,3 +4,4 @@ __pycache__/
 .DS_Store
 .cache/
 wiki-interest-data/
+wiki-interest-workspace/

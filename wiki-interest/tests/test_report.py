@@ -106,6 +106,34 @@ class ReportTest(unittest.TestCase):
             self.assertIn("one page", r["error"])
             self.assertFalse(Path(a.with_name("ds.report.pdf")).exists())
 
+    def test_agent_limitations_are_rendered_and_number_checked(self):
+        from wikiinterest.report import report
+        with tempfile.TemporaryDirectory() as tmp:
+            a = analysis_file(tmp)
+            ok = report(a, content(tmp, limitations=["English language used instead of learning English."]))
+            self.assertEqual(ok["status"], "ok")
+            bad = report(a, content(tmp, limitations=["Only 77.7% of views are counted."]))
+            self.assertEqual(bad["unverified_numbers"], ["77.7"])
+
+    def test_small_multiples_share_one_y_axis_that_fits_all(self):
+        import matplotlib.pyplot as plt
+        from wikiinterest import chart as chart_mod
+        from wikiinterest.chart import load_analysis, trend_chart
+        seen = []
+        real_savefig = plt.Figure.savefig
+        plt.Figure.savefig = lambda fig, *a, **k: (seen.append([ax.get_ylim() for ax in fig.axes if ax.lines]),
+                                                   real_savefig(fig, *a, **k))
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = analysis_file(tmp, langs=("uk", "pl", "cs", "de", "es", "fr"))
+                data = load_analysis(path)
+                data["monthly"]["uk"]["per_million"] = [v * 10 for v in data["monthly"]["uk"]["per_million"]]
+                trend_chart(data, Path(tmp) / "t.png")
+        finally:
+            plt.Figure.savefig = real_savefig
+        top = max(data["monthly"]["uk"]["per_million"])
+        self.assertTrue(all(hi >= top for _, hi in seen[0]), seen[0])
+
     def test_content_validation(self):
         from wikiinterest.report import load_content
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,6 +143,8 @@ class ReportTest(unittest.TestCase):
                 load_content(content(tmp, recommendations=[]))
             with self.assertRaises(ValueError):
                 load_content(content(tmp, summary="x" * 901))
+            with self.assertRaises(ValueError):
+                load_content(content(tmp, limitations="not a list"))
 
 
 if __name__ == "__main__":
