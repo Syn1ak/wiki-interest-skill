@@ -36,9 +36,11 @@ Every command prints **one JSON document** with a `status` field and an `agent_h
     │   ├── wi.py                 # CLI entry point: python3 scripts/wi.py <command>
     │   └── wikiinterest/
     │       ├── http.py           # shared HTTP client: User-Agent, throttling, retries, disk cache
-    │       └── resolve.py        # Step 2: topic -> Wikipedia articles in several languages
-    └── tests/
-        └── test_resolve.py       # offline unit tests (fake API responses)
+    │       ├── resolve.py        # Step 2: topic -> Wikipedia articles in several languages
+    │       └── fetch.py          # Step 3: daily pageviews -> dataset file
+    └── tests/                    # offline unit tests (fake API responses)
+        ├── test_resolve.py
+        └── test_fetch.py
 ```
 
 ## Requirements
@@ -52,6 +54,7 @@ Optional environment variables:
 |---|---|
 | `WIKI_INTEREST_CONTACT` | Contact info (email or URL) added to the User-Agent, as required by the [Wikimedia User-Agent policy](https://meta.wikimedia.org/wiki/User-Agent_policy) |
 | `WIKI_INTEREST_CACHE` | Cache directory (default: `wiki-interest/.cache/`) |
+| `WIKI_INTEREST_DATA` | Where `fetch` writes datasets (default: `./wiki-interest-data/`) |
 
 ---
 
@@ -133,3 +136,52 @@ python3 -m unittest discover -s wiki-interest/tests -v
 ```
 
 **Next step.** `fetch`: download views for the resolved articles, adding the views of their redirects, with `agent=user` (finding #6) and the total views of each language edition for normalisation (finding #5). Everything is cached through the shared client.
+
+---
+
+## Step 3: `fetch`, pageviews → dataset file
+
+**What we did.** A command that downloads the views for a resolved topic and saves them as one dataset file.
+
+```bash
+python3 wiki-interest/scripts/wi.py fetch --qid Q333 --langs uk,pl,cs                  # last 24 complete months
+python3 wiki-interest/scripts/wi.py fetch --qid Q333 --langs uk --start 2023-01 --end 2025-12
+python3 wiki-interest/scripts/wi.py fetch --qid Q1666254 --langs pl,cs --article "pl=Głodówka lecznicza"
+```
+
+**Why.** Analysis needs clean, complete numbers that already take the findings from Step 1 into account. If the agent downloaded and combined the series itself, it could easily forget the redirects, use bot traffic, or mix periods. Here the rules are in code and apply every time.
+
+**How it works:**
+
+1. **Pick the articles.** Take the Wikidata sitelink for each language, or a proxy article passed with `--article lang=title`. A proxy is allowed only when the user approved it, and it is marked `proxy: true` everywhere. Every article is verified again on its wiki (exists, not a disambiguation page).
+2. **Choose the period.** Whole months only, by default the last 24 *complete* months. An incomplete current month would look like a false drop.
+3. **Download four daily series per language:**
+   - `article`: human views of the article (`agent=user`, finding #6);
+   - `redirects`: human views of all redirects to it, summed (capped at 40 redirects; the number skipped is reported);
+   - `automated`: views flagged as automated traffic, kept as a **trust signal**, not added to the interest;
+   - `project_total`: all human views of that language edition, for normalisation (finding #5).
+4. **Only daily data is downloaded.** Monthly numbers are sums of days, which saves requests, and daily data is needed anyway to find spikes. Days the API does not return count as 0 views.
+5. **Write a dataset file** (`wiki-interest-data/<qid>_<langs>_<start>_<end>.json`) with the full series, the period, the filters and the missing languages. It is too large for the agent's context, so **stdout gets only a compact summary**: total and average daily views, share of views from redirects, share of automated traffic, and number of zero-view days.
+6. **Report missing languages** instead of dropping them silently. Status `partial` means some languages have no data, and `no_data` means none do.
+
+**Caching.** Pageviews of past days never change, so they are cached forever. Only data for the last 3 days expires after a day. A repeated `fetch` makes 0 network requests.
+
+**Results on real data:**
+
+| Query | Result |
+|---|---|
+| `Q333` astronomy · uk,pl,cs · 24 months | `ok`. uk 23 326 views (32/day), pl 37 652 (52/day), cs 15 542 (21/day). Automated share 14–34%. 14 network requests, ~9 s |
+| same, repeated | 0 network requests (17 from cache) |
+| `Q1666254` intermittent fasting · pl,cs | `partial`: cs 6 939 views, pl has no article and is reported in `missing` |
+| same + `--article "pl=Głodówka lecznicza"` | `ok`, pl marked `proxy: true`, and the agent is told to mention it as a limitation |
+| `--end 2026-09` (current month) | `error`: only complete months are allowed |
+
+**Cross-check with Step 1.** The totals match the independent exploration script, which used monthly data: Polish *Astronomia* 37 652 = 20 477 + 17 175 exactly, and Ukrainian *Астрономія* 23 326 vs 23 322 (the 4 extra views come from its redirect). The automated traffic for Ukrainian *Астрономія* over the last 12 months is 2 606 vs 2 612 in Step 1.
+
+**Tests.** Period handling (last complete months, leap year, invalid months), zero-filling missing days, cache TTL, summing redirects, the redirect cap, missing languages, proxy articles, skipping disambiguation pages, and argument validation.
+
+```bash
+python3 -m unittest discover -s wiki-interest/tests -v
+```
+
+**Next step.** `analyze`: read a dataset and compute what the answer needs. That means year-over-year growth, raw and normalised by project traffic; trend direction; spike detection; seasonality; a minimum-volume threshold; and a confidence level with reasons, answering "how much can we trust this growth?".
